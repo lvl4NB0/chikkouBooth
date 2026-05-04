@@ -14,8 +14,11 @@ scene.background = new THREE.Color(0x000000);
 
 //カメラ
 const POV = 75
+let cameraX = 0;
+let cameraY = 0;
+let cameraZ = 0;
 const camera = new THREE.PerspectiveCamera(POV, window.innerWidth/window.innerHeight, 0.1, 1000);
-camera.position.z = 5;
+camera.position.z = cameraZ;
 
 const earthTexture = new THREE.TextureLoader().load("earth_8k.jpg");
 const cloudTexture = new THREE.TextureLoader().load("cloud_8k.jpg");
@@ -51,13 +54,16 @@ document.body.style.overflow = 'hidden';
 
 //描画
 function tick(){
-    //earth.rotation.y += 0.001;
-    //clouds.rotation.y += 0.0015;
+    earth.rotation.y += 0.001;
+    clouds.rotation.y += 0.0015;
     updateZoom();
-    onMouseMove();
+    updateView();
+    cameraPosEasing();
+    camera.lookAt(new THREE.Vector3(nowX,nowY,nowZ));
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
 }
+camera.lookAt(new THREE.Vector3(0, 0, 0));
 renderer.setAnimationLoop(tick);
 
 
@@ -73,18 +79,19 @@ let absoluteMouseX = 0;
 let absoluteMouseY = 0;
 let Xrot = 0;
 let Yrot = 0;
-function onMouseMove(){    
+let nowX = cameraX;
+let nowY = cameraY;
+let nowZ = cameraZ;
+function updateView(){    
     const mouseX = (absoluteMouseX / window.innerWidth)*360;
     const mouseY = ((absoluteMouseY / window.innerHeight)/2 +0.25)*360;
     Xrot += (mouseX - Xrot) * 0.02;
     Yrot += (mouseY - Yrot) * 0.02;
-    console.log(Xrot, Yrot);
     const phi = THREE.MathUtils.degToRad(90 - Yrot);
     const theta = THREE.MathUtils.degToRad(Xrot);
     camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
     camera.position.y = radius * Math.cos(phi);
     camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
-    camera.lookAt(new THREE.Vector3(0, 0, 0));
 }
 
 let targetMag = 1;
@@ -98,7 +105,31 @@ function updateZoom(){
     camera.zoom = nowMag;
 }
 
-window.addEventListener("mousemove", (event) => {
-    absoluteMouseX = event.clientX;
-    absoluteMouseY = event.clientY;
+window.addEventListener("mousemove", (e) => {
+    absoluteMouseX = e.clientX;
+    absoluteMouseY = e.clientY;
 });
+
+const deltaPos = 1;
+window.addEventListener('keydown', (e) => {
+  switch(e.key){
+    case "w" :
+        cameraZ += deltaPos
+        break;
+    case "a" :
+        cameraX -= deltaPos;
+        break;
+    case "s" : 
+        cameraZ -= deltaPos;
+        break;
+    case "d" : 
+        cameraX += deltaPos;
+        break;
+  }
+  console.log(cameraX,cameraY,cameraZ)
+});
+function cameraPosEasing(){
+    nowX += (cameraX - nowX) * 0.02;
+    nowY += (cameraY - nowY) * 0.02;
+    nowZ += (cameraZ - nowZ) * 0.02;
+}
