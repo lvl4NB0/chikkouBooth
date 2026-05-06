@@ -341,7 +341,7 @@ function renderInfo(){
     DOM.viewZ.textContent = loockAtZ.toFixed(2);
 }
 
-let targetMag = 1;
+let targetMag = 70;
 window.addEventListener("wheel", (e) => {
     let correctionFactor = 0.008;
     if(targetMag < 1){
@@ -352,7 +352,7 @@ window.addEventListener("wheel", (e) => {
     targetMag -= e.deltaY * correctionFactor;
     targetMag = Math.max(0.05, Math.min(7500, targetMag));
 });
-let nowMag = 1
+let nowMag = 70
 function updateZoom(){
     nowMag += (targetMag - nowMag) * 0.03;
     camera.zoom = nowMag;
