@@ -10,52 +10,57 @@ class Body {
         this.velocity = velocity.clone();
         this.force = new THREE.Vector3();
     }
-
+    //力をリセット
     resetForce() {
         this.force.set(0, 0, 0);
     }
-
+    //他の天体からの力を計算して加算
     addForce(other) {
         const G = 6.674e-11;
         const dir = new THREE.Vector3().subVectors(other.position, this.position);
         const distSq = dir.lengthSq();
-        const dist = Math.sqrt(distSq) + 1e-6;
+        const softening = 1e7;
+        const dist = Math.sqrt(distSq + softening);
 
-        const forceMag = G * this.mass * other.mass / distSq;
+        const forceMag = G * this.mass * other.mass / (dist * dist);
         dir.normalize().multiplyScalar(forceMag);
 
         this.force.add(dir);
     }
-
+    //位置と速度を更新
     update(dt) {
         const acc = this.force.clone().divideScalar(this.mass);
         this.velocity.add(acc.multiplyScalar(dt));
         this.position.add(this.velocity.clone().multiplyScalar(dt));
     }
 }
-
+//太陽
 const sunBody = new Body({
     mass: 1.989e30,
     position: new THREE.Vector3(0,0,0),
     velocity: new THREE.Vector3(0,0,0)
 });
-
+//地球
 const earthBody = new Body({
     mass: 5.972e24,
     position: new THREE.Vector3(1.5e11, 0, 0),
     velocity: new THREE.Vector3(0, 0, 30000)
 });
-
+//月
 const moonBody = new Body({
     mass: 7.35e22,
     position: earthBody.position.clone().add(new THREE.Vector3(3.84e8, 0, 0)),
     velocity: earthBody.velocity.clone().add(new THREE.Vector3(0, 0, 1022))
 });
+//直行方向に再計算
+const r = new THREE.Vector3().subVectors(moonBody.position, earthBody.position);
+const tangent = new THREE.Vector3().crossVectors(r, new THREE.Vector3(0,1,0)).normalize();
+moonBody.velocity = earthBody.velocity.clone().add(tangent.multiplyScalar(1022));
 
 const scaleFactor = 0.1;
 const SCALE = 2e-9;
 let TIME_SCALE = 60 * 60;
-
+//物理演算の更新
 function physicsUpdate(dt){
     const bodies = [sunBody, earthBody, moonBody];
     bodies.forEach(b => b.resetForce());
@@ -70,7 +75,7 @@ function physicsUpdate(dt){
     bodies.forEach(b => b.update(dt));
 }
 //以下レンダー部分
-
+//DOM要素
 const DOM = {
     container : document.getElementById("container"),
     x : document.getElementById("x"),
@@ -80,6 +85,7 @@ const DOM = {
     viewX : document.getElementById("viewX"),
     viewY : document.getElementById("viewY"),
     viewZ : document.getElementById("viewZ"),
+    day : document.getElementById("day"),
 };
 
 //レンダラー
@@ -166,14 +172,13 @@ scene.add(AmbientLight);
 
 document.body.style.overflow = 'hidden';
 
-//軌道線
+//地球の軌道線
 const MAX_POINTS = 1000;
 
 const trailPositions = new Float32Array(MAX_POINTS * 3);
-
-
-const earthPosForInit = earthBody.position.clone().multiplyScalar(SCALE);
-/*for(let i = 0; i < MAX_POINTS * 3; i+=3){
+//なんかうまくいかんかったやつ
+/*const earthPosForInit = earthBody.position.clone().multiplyScalar(SCALE);
+for(let i = 0; i < MAX_POINTS * 3; i+=3){
     trailPositions[i] = earthPosForInit.x;
     trailPositions[i+1] = earthPosForInit.y;
     trailPositions[i+2] = earthPosForInit.z;
@@ -189,7 +194,7 @@ trailGeometry.setAttribute(
 
 const trailMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff });
 const trailLine = new THREE.Line(trailGeometry, trailMaterial);
-
+//月の軌道線
 const moonTrailPositions = new Float32Array(MAX_POINTS * 3);
 const moonTrailGeometry = new THREE.BufferGeometry();
 
@@ -203,20 +208,17 @@ const moonTrail = new THREE.Line(
     new THREE.LineBasicMaterial({ color: 0xffffff })
 );
 
-
+//軌道線の更新
 let moonTrailIndex = 0;
-
-//scene.add(trailLine);
-
-let trailIndex = 0;
+let earthTrailIndex = 0;
 function updateTrail(earthPos, moonPos){
-    const i = trailIndex * 3;
+    const i = earthTrailIndex * 3;
 
     trailPositions[i] = earthPos.x;
     trailPositions[i + 1] = earthPos.y;
     trailPositions[i + 2] = earthPos.z;
 
-    trailIndex++;
+    earthTrailIndex++;
 
     const j = moonTrailIndex * 3;
 
@@ -227,9 +229,10 @@ function updateTrail(earthPos, moonPos){
     moonTrailIndex++;
 
 
-    if(trailIndex >= MAX_POINTS){
-        trailIndex = 0;
+    if(earthTrailIndex >= MAX_POINTS){
+        earthTrailIndex = 0;
         moonTrailIndex = 0;
+        //TrailPositions系を全部0で初期化してるから一回全部埋めてから表示
         if(!trailAdded){
             scene.add(trailLine);
             scene.add(moonTrail);
@@ -239,7 +242,7 @@ function updateTrail(earthPos, moonPos){
     moonTrailGeometry.attributes.position.needsUpdate = true;
     trailGeometry.attributes.position.needsUpdate = true;
 }
-
+//背景の星
 function createStarField(count = 5000) {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
@@ -268,39 +271,54 @@ let loockAtX = 0;
 let loockAtY = 0;
 let loockAtZ = 0;
 let followEarth = true;
+const FIXED_DT = 60;
+let timeStop = false;
+let day = 0;
+const clock = new THREE.Clock();
 //描画
 function tick(){
     stats.begin();
 
-    physicsUpdate((1/60) * TIME_SCALE);
+    try{
+        const fps = 1 / clock.getDelta();
+        if(fps > 0){
+            TIME_SCALE /= (1 / fps);
+        }
+        console.log(TIME_SCALE);
+        for(let i = 0; i < TIME_SCALE / FIXED_DT; i++){
+            physicsUpdate(FIXED_DT);
+        }
 
-    const earthPos = earthBody.position.clone().multiplyScalar(SCALE);
-    const moonPos = moonBody.position.clone().multiplyScalar(SCALE);
-    earth.position.copy(earthPos);
-    clouds.position.copy(earthPos);
-    sun.position.copy(sunBody.position.clone().multiplyScalar(SCALE));
-    moon.position.copy(moonPos);
-    earth.rotation.y += 0.001;
-    clouds.rotation.y += 0.0015;
-    loockAtX = earthPos.x + nowViewX;
-    loockAtY = earthPos.y + nowViewY;
-    loockAtZ = earthPos.z + nowViewZ;
-    if (followEarth){
-        camera.lookAt(new THREE.Vector3(loockAtX, loockAtY, loockAtZ));
-    }else{
-        camera.lookAt(0,0,0);
+        const earthPos = earthBody.position.clone().multiplyScalar(SCALE);
+        const moonPos = moonBody.position.clone().multiplyScalar(SCALE);
+        earth.position.copy(earthPos);
+        clouds.position.copy(earthPos);
+        sun.position.copy(sunBody.position.clone().multiplyScalar(SCALE));
+        moon.position.copy(moonPos);
+        day += TIME_SCALE / (60 * 60 * 24);
+        DOM.day.textContent = Math.floor(day).toString();
+        if(!timeStop){
+        earth.rotation.y += 0.001;
+        clouds.rotation.y += 0.0015;
+        }
+        loockAtX = earthPos.x + nowViewX;
+        loockAtY = earthPos.y + nowViewY;
+        loockAtZ = earthPos.z + nowViewZ;
+        if (followEarth){
+            camera.lookAt(new THREE.Vector3(loockAtX, loockAtY, loockAtZ));
+        }else{
+            camera.lookAt(0,0,0);
+        }
+        updateTrail(earthPos, moonPos);
+        updateZoom();
+        updateView();
+        cameraViewEasing();
+        camera.updateProjectionMatrix();
+        renderer.render(scene, camera);
+    }finally{    
+        stats.end();
     }
-    updateTrail(earthPos, moonPos);
-    updateZoom();
-    updateView();
-    cameraViewEasing();
-    camera.updateProjectionMatrix();
-    
-    stats.end();
-    renderer.render(scene, camera);
 }
-[nowViewX, nowViewY, nowViewZ] = earthBody.position.clone().multiplyScalar(SCALE);
-camera.lookAt(new THREE.Vector3(nowViewX,nowViewY,nowViewZ));
 renderer.setAnimationLoop(tick);
 
 
@@ -311,6 +329,7 @@ window.addEventListener("resize", () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+//カメラ操作
 const radius = 10;
 let absoluteMouseX = 0;
 let absoluteMouseY = 0;
@@ -331,6 +350,7 @@ function updateView(){
     camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
     renderInfo();
 }
+//情報表示
 function renderInfo(){
     DOM.x.textContent = camera.position.x.toFixed(2);
     DOM.y.textContent = camera.position.y.toFixed(2);
@@ -340,8 +360,8 @@ function renderInfo(){
     DOM.viewY.textContent = loockAtY.toFixed(2);
     DOM.viewZ.textContent = loockAtZ.toFixed(2);
 }
-
-let targetMag = 1;
+//ズーム操作
+let targetMag = 300;
 window.addEventListener("wheel", (e) => {
     let correctionFactor = 0.008;
     if(targetMag < 1){
@@ -352,17 +372,17 @@ window.addEventListener("wheel", (e) => {
     targetMag -= e.deltaY * correctionFactor;
     targetMag = Math.max(0.05, Math.min(7500, targetMag));
 });
-let nowMag = 1
+let nowMag = 1;
 function updateZoom(){
     nowMag += (targetMag - nowMag) * 0.03;
     camera.zoom = nowMag;
 }
-
+//マウス位置の取得
 window.addEventListener("mousemove", (e) => {
     absoluteMouseX = e.clientX;
     absoluteMouseY = e.clientY;
 });
-
+//キーボード操作
 const deltaPos = 1;
 let cameraViewX = 0;
 let cameraViewY = 0;
@@ -411,14 +431,20 @@ window.addEventListener('keydown', (e) => {
     case "3" :
         TIME_SCALE = 60 * 60 * 24 * 365;
         break;
+    case "4" :
+        TIME_SCALE = 0;
+        timeStop = true;
+        break;
   }
+        console.log(TIME_SCALE);
 });
+//カメラの視点移動をイージング
 function cameraViewEasing(){
     nowViewX += (cameraViewX - nowViewX) * 0.02;
     nowViewY += (cameraViewY - nowViewY) * 0.02;
     nowViewZ += (cameraViewZ - nowViewZ) * 0.02;
 }
-
+//ポインタロック
 window.addEventListener('click', () => {
     if(document.pointerLockElement){
         document.exitPointerLock();
