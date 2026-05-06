@@ -1,7 +1,10 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
 import Stats from "three/examples/jsm/libs/stats.module";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+const EARTH_RADIUS = 6.371e6;
+let hollow_mode = true;
+let hollowEarthHasMass = true;
 //物理演算部分
 class Body {
     constructor({ mass, position, velocity }) {
@@ -22,7 +25,14 @@ class Body {
         const softening = 1e7;
         const dist = Math.sqrt(distSq + softening);
 
-        const forceMag = G * this.mass * other.mass / (dist * dist);
+        let forceMag;
+
+        if(other === earthBody && dist < EARTH_RADIUS){
+                forceMag = hollowEarthHasMass ? G * this.mass * other.mass * dist / (EARTH_RADIUS ** 3) : 0;
+        }else{
+            forceMag = G * this.mass * other.mass / (dist * dist);
+        }
+
         dir.normalize().multiplyScalar(forceMag);
 
         this.force.add(dir);
@@ -57,12 +67,19 @@ const r = new THREE.Vector3().subVectors(moonBody.position, earthBody.position);
 const tangent = new THREE.Vector3().crossVectors(r, new THREE.Vector3(0,1,0)).normalize();
 moonBody.velocity = earthBody.velocity.clone().add(tangent.multiplyScalar(1022));
 
+//テスト粒子
+const testBody = new Body({
+    mass: 1,
+    position: earthBody.position.clone().add(new THREE.Vector3(0, 0, 3e6)),
+    velocity: earthBody.velocity.clone()
+});
+
 const scaleFactor = 0.1;
 const SCALE = 2e-9;
 let TIME_SCALE = 60 * 60;
 //物理演算の更新
 function physicsUpdate(dt){
-    const bodies = [sunBody, earthBody, moonBody];
+    const bodies = [sunBody, earthBody, moonBody, testBody];
     bodies.forEach(b => b.resetForce());
 
     for(let i=0;i<bodies.length;i++){
@@ -89,12 +106,12 @@ const DOM = {
 };
 
 //レンダラー
-const renderer = new THREE.WebGPURenderer({
+const renderer = new THREE.WebGLRenderer({
         canvas: document.querySelector("#can"),
     });
 renderer.setPixelRatio(devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-
+renderer.localClippingEnabled = true;
 //シーンを作成
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -123,11 +140,20 @@ const cloudTexture = new THREE.TextureLoader().load("cloud_8k.jpg");
 const earth = new THREE.Mesh(
     new THREE.SphereGeometry(1 * scaleFactor, 64, 64),
     new THREE.MeshStandardMaterial({
-        map: earthTexture
+        map: earthTexture,
+        //side: THREE.DoubleSide
     })
 );
 scene.add(earth);
 
+const innerEarth = new THREE.Mesh(
+    new THREE.SphereGeometry(1 * scaleFactor, 64, 64),
+    new THREE.MeshStandardMaterial({
+        color: 0x222244,
+        side: THREE.BackSide
+    })
+);
+scene.add(innerEarth);
 /*const initEarth = new THREE.Mesh(
     new THREE.SphereGeometry(1.05 * scaleFactor, 64, 64),
     new THREE.MeshStandardMaterial({
@@ -142,6 +168,7 @@ const clouds = new THREE.Mesh(
     new THREE.SphereGeometry(1.1 * scaleFactor, 64, 64),
     new THREE.MeshStandardMaterial({
         map: cloudTexture,
+        //side: THREE.DoubleSide,
         transparent: true,
         opacity: 0.8
     })
@@ -160,6 +187,13 @@ const moon = new THREE.Mesh(
     new THREE.MeshStandardMaterial({ color: 0xaaaaaa })
 );
 scene.add(moon);
+
+//テスト粒子
+const testMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05 * scaleFactor, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xff0000 })
+);
+scene.add(testMesh);
 
 //ライト
 const light = new THREE.DirectionalLight(0xffffff, 10);
@@ -271,7 +305,7 @@ let loockAtX = 0;
 let loockAtY = 0;
 let loockAtZ = 0;
 let followEarth = true;
-const FIXED_DT = 60;
+const FIXED_DT = 3;
 let timeStop = false;
 let day = 0;
 const clock = new THREE.Clock();
@@ -290,10 +324,13 @@ function tick(){
         const earthPos = earthBody.position.clone().multiplyScalar(SCALE);
         const moonPos = moonBody.position.clone().multiplyScalar(SCALE);
         const sunPos = sunBody.position.clone().multiplyScalar(SCALE);
+        const testPos = testBody.position.clone().multiplyScalar(SCALE);
         earth.position.copy(earthPos);
+        innerEarth.position.copy(earth.position);
         clouds.position.copy(earthPos);
         sun.position.copy(sunPos);
         moon.position.copy(moonPos);
+        testMesh.position.copy(testPos);
         day += dt / (60 * 60 * 24);
         DOM.day.textContent = Math.floor(day).toString();
         if(!timeStop){
@@ -308,6 +345,12 @@ function tick(){
         }else{
             camera.position.set(earthPos.x + cameraX, earthPos.y + cameraY, earthPos.z + cameraZ);
             camera.lookAt(sunPos);
+        }
+        if(hollow_mode){
+            HollowMode();
+        }else{
+            earth.material.clippingPlanes = [];
+            clouds.material.clippingPlanes = [];
         }
         updateTrail(earthPos, moonPos);
         updateZoom();
@@ -367,7 +410,7 @@ function renderInfo(){
     DOM.viewZ.textContent = loockAtZ.toFixed(2);
 }
 //ズーム操作
-let targetMag = 300;
+let targetMag = 70;
 window.addEventListener("wheel", (e) => {
     let correctionFactor = 0.008;
     if(targetMag < 1){
@@ -395,6 +438,7 @@ const deltaPos = 1;
 let cameraViewX = 0;
 let cameraViewY = 0;
 let cameraViewZ = 0;
+let interval;
 window.addEventListener('keydown', (e) => {
   switch(e.key){
     case "w" :
@@ -446,9 +490,36 @@ window.addEventListener('keydown', (e) => {
         TIME_SCALE = 0;
         timeStop = true;
         break;
+    case "m" :
+        targetMag = prompt("Enter zoom level (0.05 - 7500):", targetMag);
+        targetMag = parseFloat(targetMag);
+        break;
+    case "h" :
+        hollow_mode = !hollow_mode;
+        break;
+    case "n" :
+        hollowEarthHasMass = !hollowEarthHasMass;
+        console.log("Hollow Earth has mass:", hollowEarthHasMass);
+        break;
   }
         console.log(TIME_SCALE);
 });
+
+function HollowMode(){
+    const earthPos = earth.position.clone();
+
+            const clipPlane = new THREE.Plane(
+                new THREE.Vector3(1, 0, 0),
+                -earthPos.x 
+            );
+
+            earth.material.clippingPlanes = [clipPlane];
+            clouds.material.clippingPlanes = [clipPlane];
+
+            earth.material.needsUpdate = true;
+            clouds.material.needsUpdate = true;
+        }
+
 //カメラの視点移動をイージング
 function cameraViewEasing(){
     nowViewX += (cameraViewX - nowViewX) * 0.02;
