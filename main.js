@@ -280,22 +280,21 @@ function tick(){
     stats.begin();
 
     try{
-        const fps = 1 / clock.getDelta();
-        if(fps > 0){
-            TIME_SCALE /= (1 / fps);
-        }
-        console.log(TIME_SCALE);
-        for(let i = 0; i < TIME_SCALE / FIXED_DT; i++){
+        let delta = clock.getDelta();
+        delta = Math.min(delta, 0.1);
+        const dt = delta * TIME_SCALE;
+        for(let i = 0; i < dt / FIXED_DT; i++){
             physicsUpdate(FIXED_DT);
         }
 
         const earthPos = earthBody.position.clone().multiplyScalar(SCALE);
         const moonPos = moonBody.position.clone().multiplyScalar(SCALE);
+        const sunPos = sunBody.position.clone().multiplyScalar(SCALE);
         earth.position.copy(earthPos);
         clouds.position.copy(earthPos);
-        sun.position.copy(sunBody.position.clone().multiplyScalar(SCALE));
+        sun.position.copy(sunPos);
         moon.position.copy(moonPos);
-        day += TIME_SCALE / (60 * 60 * 24);
+        day += dt / (60 * 60 * 24);
         DOM.day.textContent = Math.floor(day).toString();
         if(!timeStop){
         earth.rotation.y += 0.001;
@@ -304,14 +303,16 @@ function tick(){
         loockAtX = earthPos.x + nowViewX;
         loockAtY = earthPos.y + nowViewY;
         loockAtZ = earthPos.z + nowViewZ;
-        if (followEarth){
+        if(followEarth){
             camera.lookAt(new THREE.Vector3(loockAtX, loockAtY, loockAtZ));
         }else{
-            camera.lookAt(0,0,0);
+            camera.position.set(earthPos.x + cameraX, earthPos.y + cameraY, earthPos.z + cameraZ);
+            camera.lookAt(sunPos);
         }
         updateTrail(earthPos, moonPos);
         updateZoom();
-        updateView();
+        const target = followEarth ? earthPos : sunPos;
+        updateView(target);
         cameraViewEasing();
         camera.updateProjectionMatrix();
         renderer.render(scene, camera);
@@ -338,16 +339,21 @@ let Yrot = 0;
 let nowX = cameraX;
 let nowY = cameraY;
 let nowZ = cameraZ;
-function updateView(){  
+function updateView(target){  
     const mouseX = (absoluteMouseX / window.innerWidth)*360;
     const mouseY = ((absoluteMouseY / window.innerHeight)/2 +0.25)*360;
     Xrot += (mouseX - Xrot) * 0.02;
     Yrot += (mouseY - Yrot) * 0.02;
     const phi = THREE.MathUtils.degToRad(90 - Yrot);
     const theta = THREE.MathUtils.degToRad(Xrot);
-    camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
-    camera.position.y = radius * Math.cos(phi);
-    camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+    const offset = new THREE.Vector3(
+    radius * Math.sin(phi) * Math.sin(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.cos(theta)
+    );
+
+    camera.position.copy(target.clone().add(offset));
+    camera.lookAt(target);
     renderInfo();
 }
 //情報表示
@@ -366,6 +372,8 @@ window.addEventListener("wheel", (e) => {
     let correctionFactor = 0.008;
     if(targetMag < 1){
         correctionFactor *= 0.05;
+    }else if(targetMag < 200){
+        correctionFactor *= 5;
     }else{
         correctionFactor *= 10;
     }
@@ -429,9 +437,12 @@ window.addEventListener('keydown', (e) => {
         TIME_SCALE = 60 * 60 * 24;
         break;
     case "3" :
-        TIME_SCALE = 60 * 60 * 24 * 365;
+        TIME_SCALE = 60 * 60 * 24 * 7;
         break;
     case "4" :
+        TIME_SCALE = 60 * 60 * 24 * 365;
+        break;
+    case "5" :
         TIME_SCALE = 0;
         timeStop = true;
         break;
